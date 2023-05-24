@@ -66,13 +66,13 @@ object Gradient {
         // Once gradient is computed, start the next round in a second
         timers.startSingleTimer(Round, 1.second)
 
-        ctx.log.info(s"${ctx.self.path.name} CONTEXT\n${nbrs}\n${distances}\n${nbrGradients}")
+        // ctx.log.info(s"${ctx.self.path.name} CONTEXT\nDisaligned nbrs: ${disalignedNbrs}\nNbrs: ${nbrs}\nDistances: ${distances}\nNbrGradients:${nbrGradients}")
 
         if(source){
           ctx.log.info(s"GRADIENT (SOURCE): ${ctx.self.path.name} -> ${gradient}")
           Gradient(source, 0, nbrs, distances, newNbrGradients, position)
         } else {
-          val minNbr = alignedNbrGradients.minByOption(_._2)
+          val minNbr = (alignedNbrGradients - ctx.self).minByOption(_._2)
           val updatedG = minNbr.map(_._2).getOrElse(Double.PositiveInfinity) + minNbr.flatMap(n => alignedDistances.get(n._1)).getOrElse(Double.PositiveInfinity)
           ctx.log.info(s"GRADIENT: ${ctx.self.path.name} -> ${updatedG}")
           Gradient(source, updatedG, nbrs, distances, nbrGradients + (ctx.self -> updatedG), position)
