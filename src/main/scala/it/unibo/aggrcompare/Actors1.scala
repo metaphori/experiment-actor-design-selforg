@@ -14,7 +14,7 @@ object C {
  * 1st attempt: an actor computing a gradient, atomic behaviour, no separation of concerns
  */
 object Gradient {
-  val RETENTION_TIME = 5000 // 5 seconds
+  val RETENTION_TIME = 10000 // 10 seconds
   def currentTime(): Long = System.currentTimeMillis()
 
   sealed trait Msg
@@ -83,7 +83,7 @@ object Gradient {
         Behaviors.same
       }
       case SetNeighbourGradient(d, from) =>
-        Gradient(source, gradient, nbrs + (from -> System.currentTimeMillis()), distances, nbrGradients + (from -> d), position)
+        Gradient(source, gradient, nbrs + (from -> currentTime()), distances, nbrGradients + (from -> d), position)
       case Round => {
         nbrs.keySet.foreach(nbr => {
           // Query neighbour for neighbouring sensors
@@ -92,7 +92,7 @@ object Gradient {
           nbr ! QueryGradient(getGradientAdapter)
         })
         timers.startSingleTimer(ComputeGradient, 1.seconds)
-        Gradient(source, gradient, nbrs, distances, nbrGradients, position)
+        Behaviors.same
       }
       case Stop => Behaviors.stopped
     }
