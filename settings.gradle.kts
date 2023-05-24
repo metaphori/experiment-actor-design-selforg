@@ -8,5 +8,3 @@
  */
 
 rootProject.name = "experiment-actor-design-selforg"
-
-include("actors")

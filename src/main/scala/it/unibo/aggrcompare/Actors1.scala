@@ -14,6 +14,9 @@ object C {
  * 1st attempt: an actor computing a gradient, atomic behaviour, no separation of concerns
  */
 object Gradient {
+  val RETENTION_TIME = 5000 // 5 seconds
+  def currentTime(): Long = System.currentTimeMillis()
+
   sealed trait Msg
   case class SetSource(isSource: Boolean) extends Msg
   case class SetPosition(point: Point3D) extends Msg
@@ -25,13 +28,14 @@ object Gradient {
   case class AddNeighbour(nbr: ActorRef[Msg]) extends Msg
   case class RemoveNeighbour(nbr: ActorRef[Msg]) extends Msg
   case object Round extends Msg
+  case object Stop extends Msg
 
   case class NbrPos(position: Point3D, nbr: ActorRef[Msg])
   case class NbrGradient(gradient: Double, nbr: ActorRef[Msg])
 
   def apply(source: Boolean,
             gradient: Double,
-            nbrs: Set[ActorRef[Msg]],
+            nbrs: Map[ActorRef[Msg],Long],
             distances: Map[ActorRef[Msg],Double],
             nbrGradients: Map[ActorRef[Msg],Double],
             position: Point3D = Point3D(0,0,0)): Behavior[Msg] = Behaviors.setup{ ctx =>
@@ -43,7 +47,7 @@ object Gradient {
       case SetSource(s) =>
         Gradient(s, 0, nbrs, distances, nbrGradients, position)
       case AddNeighbour(nbr) =>
-        Gradient(source, gradient, nbrs + nbr, distances, nbrGradients, position)
+        Gradient(source, gradient, nbrs + (nbr -> System.currentTimeMillis()), distances, nbrGradients, position)
       case RemoveNeighbour(nbr) =>
         Gradient(source, gradient, nbrs - nbr, distances, nbrGradients, position)
       case SetPosition(p) =>
@@ -52,21 +56,24 @@ object Gradient {
         replyTo ! NbrPos(position, ctx.self)
         Behaviors.same
       case SetDistance(d, from) =>
-        Gradient(source, gradient, nbrs, distances + (from -> d), nbrGradients, position)
+        Gradient(source, gradient, nbrs + (from -> currentTime()), distances + (from -> d), nbrGradients, position)
       case ComputeGradient => {
         val newNbrGradients = nbrGradients + (ctx.self -> gradient)
+        val disalignedNbrs = nbrs.filter(nbr => currentTime() - nbrs.getOrElse(nbr._1, Long.MinValue) > RETENTION_TIME).keySet
+        val alignedNbrGradients = newNbrGradients -- disalignedNbrs
+        val alignedDistances = distances -- disalignedNbrs
 
         // Once gradient is computed, start the next round in a second
         timers.startSingleTimer(Round, 1.second)
 
-        ctx.log.info(s"${ctx.self.path.name} CONTEXT\n${distances}\n${nbrGradients}")
+        ctx.log.info(s"${ctx.self.path.name} CONTEXT\n${nbrs}\n${distances}\n${nbrGradients}")
 
         if(source){
           ctx.log.info(s"GRADIENT (SOURCE): ${ctx.self.path.name} -> ${gradient}")
           Gradient(source, 0, nbrs, distances, newNbrGradients, position)
         } else {
-          val minNbr = newNbrGradients.minByOption(_._2)
-          val updatedG = minNbr.map(_._2).getOrElse(Double.PositiveInfinity) + minNbr.flatMap(n => distances.get(n._1)).getOrElse(Double.PositiveInfinity)
+          val minNbr = alignedNbrGradients.minByOption(_._2)
+          val updatedG = minNbr.map(_._2).getOrElse(Double.PositiveInfinity) + minNbr.flatMap(n => alignedDistances.get(n._1)).getOrElse(Double.PositiveInfinity)
           ctx.log.info(s"GRADIENT: ${ctx.self.path.name} -> ${updatedG}")
           Gradient(source, updatedG, nbrs, distances, nbrGradients + (ctx.self -> updatedG), position)
         }
@@ -76,17 +83,18 @@ object Gradient {
         Behaviors.same
       }
       case SetNeighbourGradient(d, from) =>
-        Gradient(source, gradient, nbrs, distances, nbrGradients + (from -> d), position)
+        Gradient(source, gradient, nbrs + (from -> System.currentTimeMillis()), distances, nbrGradients + (from -> d), position)
       case Round => {
-        nbrs.foreach(nbr => {
+        nbrs.keySet.foreach(nbr => {
           // Query neighbour for neighbouring sensors
           nbr ! GetPosition(getPositionAdapter)
           // Query neighbour for application data
           nbr ! QueryGradient(getGradientAdapter)
         })
         timers.startSingleTimer(ComputeGradient, 1.seconds)
-        Behaviors.same
+        Gradient(source, gradient, nbrs, distances, nbrGradients, position)
       }
+      case Stop => Behaviors.stopped
     }
   } } }
 }
@@ -95,10 +103,13 @@ object Gradient {
 object Actors1 extends App {
   println("Actors implementation")
 
+  var map = Map[Int, ActorRef[Gradient.Msg]]()
   val system = ActorSystem[C.Start.type](Behaviors.setup { ctx =>
-    var map = Map[Int, ActorRef[Gradient.Msg]]()
+    // 1 - 2 - 3 - 4 - 5 - 6 - 7 - 8 - 9 - 10   (IDs)
+    // --------------------------------------
+    // 2 - 1 - 0 - 1 - 2 - 3 - 4 - 5 - 6 - 7    (gradient)
     for(i <- 1 to 10) {
-      map += i -> ctx.spawn(Gradient(false, Double.PositiveInfinity, Set.empty, Map.empty, Map.empty), s"device-${i}")
+      map += i -> ctx.spawn(Gradient(false, Double.PositiveInfinity, Map.empty, Map.empty, Map.empty), s"device-${i}")
     }
     map.keys.foreach(d => {
       map(d) ! Gradient.SetPosition(Point3D(d,0,0))
@@ -112,4 +123,8 @@ object Actors1 extends App {
 
     Behaviors.ignore
   }, "ActorBasedChannel")
+
+  Thread.sleep(10000)
+
+  map(4) ! Gradient.Stop
 }
