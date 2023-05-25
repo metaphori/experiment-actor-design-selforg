@@ -6,13 +6,10 @@ import akka.actor.typed.scaladsl.AskPattern.Askable
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
 import akka.actor.typed.{ActorRef, ActorSystem, Behavior, Scheduler}
 import akka.util.Timeout
-import it.unibo.aggrcompare.Gradient.{NbrGradient, SetNeighbourGradient}
 import it.unibo.scafi.space.Point3D
 
-import scala.jdk.CollectionConverters._
+import scala.concurrent.duration.DurationInt
 import scala.concurrent.{ExecutionContext, Future}
-import scala.concurrent.duration.{DurationInt, FiniteDuration}
-import scala.util.{Success, Try}
 
 /**
  * 2nd attempt: generalisation and separation of concerns (context management & logic)
