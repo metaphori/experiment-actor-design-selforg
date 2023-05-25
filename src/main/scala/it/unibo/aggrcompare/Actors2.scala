@@ -188,7 +188,7 @@ object AggrActor {
 object Actors2 extends App {
   println("Actors implementation")
 
-  val system = ActorSystem[C.Start.type](Behaviors.setup { ctx =>
+  val system = ActorSystem[SystemMessages.Start.type](Behaviors.setup { ctx =>
     var map = Map[Int, ActorRef[Any]]()
     for(i <- 1 to 10) {
       map += i -> ctx.spawn(AggrActor(i, Point3D(i,0,0)), s"device-${i}")

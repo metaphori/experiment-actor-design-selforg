@@ -87,7 +87,7 @@ object Actors3 extends App {
   import DeviceProtocol._
   println("Actors implementation")
 
-  val system = ActorSystem[C.Start.type](Behaviors.setup { ctx =>
+  val system = ActorSystem[SystemMessages.Start.type](Behaviors.setup { ctx =>
     var map = Map[Int, ActorRef[DeviceProtocol]]()
     for(i <- 1 to 10) {
       map += i -> ctx.spawn(DeviceActor[Double]((_,d) => {

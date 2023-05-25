@@ -6,7 +6,7 @@ import it.unibo.scafi.space.Point3D
 
 import scala.concurrent.duration.DurationInt
 
-object C {
+object SystemMessages {
   case object Start
 }
 
@@ -104,7 +104,7 @@ object Actors1 extends App {
   println("Actors implementation")
 
   var map = Map[Int, ActorRef[Gradient.Msg]]()
-  val system = ActorSystem[C.Start.type](Behaviors.setup { ctx =>
+  val system = ActorSystem[SystemMessages.Start.type](Behaviors.setup { ctx =>
     // 1 - 2 - 3 - 4 - 5 - 6 - 7 - 8 - 9 - 10   (IDs)
     // --------------------------------------
     // 2 - 1 - 0 - 1 - 2 - 3 - 4 - 5 - 6 - 7    (gradient)

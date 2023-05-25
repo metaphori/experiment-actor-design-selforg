@@ -63,7 +63,7 @@ object ChannelLogic {
 object Actors4 extends App {
   println("Actors implementation")
 
-  val system = ActorSystem[C.Start.type](Behaviors.setup { ctx =>
+  val system = ActorSystem[SystemMessages.Start.type](Behaviors.setup { ctx =>
     // TODO
     Behaviors.ignore
   }, "ActorBasedChannel")
