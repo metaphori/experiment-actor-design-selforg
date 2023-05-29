@@ -22,3 +22,11 @@ TODO DESCRIPTION
     // --------------------------------------
     // 2 - 1 - 0 - x1 - x2 - x3 - x4 - x5 - x6 - x7   (gradient -- with large x_i)
 ```
+
+### Actor-based Design 1b
+
+- Here, we bring the scheduling of rounds outside the device itself
+
+```bash
+./gradlew -PmainClass=it.unibo.aggrcompare.Actors1ExternalScheduling run
+```

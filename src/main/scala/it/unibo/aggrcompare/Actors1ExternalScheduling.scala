@@ -63,8 +63,9 @@ object Actors1ExternalScheduling {
           ctx.log.info(s"GRADIENT (SOURCE): ${ctx.self.path.name} -> ${gradient}")
           Actors1ExternalScheduling(source, 0, nbrs, distances, newNbrGradients, position)
         } else {
-          val minNbr = (alignedNbrGradients - ctx.self).minByOption(_._2)
-          val updatedG = minNbr.map(_._2).getOrElse(Double.PositiveInfinity) + minNbr.flatMap(n => alignedDistances.get(n._1)).getOrElse(Double.PositiveInfinity)
+          val updatedG = (alignedNbrGradients - ctx.self).map(n => n -> (n._2
+            + alignedDistances.get(n._1).getOrElse(Double.PositiveInfinity))).values.minOption
+            .getOrElse(Double.PositiveInfinity)
           ctx.log.info(s"GRADIENT: ${ctx.self.path.name} -> ${updatedG}")
           Actors1ExternalScheduling(source, updatedG, nbrs, distances, nbrGradients + (ctx.self -> updatedG), position)
         }
