@@ -30,3 +30,9 @@ TODO DESCRIPTION
 ```bash
 ./gradlew -PmainClass=it.unibo.aggrcompare.Actors1ExternalScheduling run
 ```
+
+### Actor-based Design 3 (OOP-style)
+
+```bash
+./gradlew -PmainClass=it.unibo.aggrcompare.Actors3App run
+```

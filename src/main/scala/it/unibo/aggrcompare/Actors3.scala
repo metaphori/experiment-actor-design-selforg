@@ -49,31 +49,31 @@ object Actors3 {
 
     def sense[T](name: String): T = localSensors(name).asInstanceOf[T]
     def senseOrElse[T](name: String, default: => T): T = localSensors.getOrElse(name, default).asInstanceOf[T]
-    def nbrSense[T](name: String)(id: Nbr): Option[T] = nbrValue(name).get(id) // .filter(_ => neighbors.contains(id))
-    def nbrValue[T](name: String): Map[Nbr, T] = senseOrElse[Map[Nbr, T]](name, Map.empty) // .filter(tp => neighbors.contains(tp._1))
+    def nbrSense[T](name: String)(id: Nbr): Option[T] = nbrValue(name).get(id).filter((v: T) => neighbors.contains(id))
+    def nbrValue[T](name: String): Map[Nbr, T] = senseOrElse[Map[Nbr, T]](name, Map.empty).filter(tp => neighbors.contains(tp._1))
     def neighbors: Set[ActorRef[DeviceProtocol]] = senseOrElse[Map[Nbr, Long]](Sensors.neighbors, Map.empty)
       .filter(tp => currentTime() - tp._2 < RETENTION_TIME).keySet
     def name: String = context.self.path.name
     def compute(what: String, d: DeviceActor[T]): T
 
     override def onMessage(msg: DeviceProtocol): Behavior[DeviceProtocol] = Behaviors.withTimers { timers =>
-      msg match { // NB: no Behaviors.receiveMessage (!!!!)
+      msg match { // NB: no Behaviors.receiveMessage since the current message is the parameter of onMessage!!!
         case SetSensor(sensorName, value) =>
-          context.log.info(s"${this.name}: setting sensor $sensorName  to $value ")
+          // context.log.info(s"${this.name}: setting sensor $sensorName  to $value ")
           localSensors += (sensorName -> value)
           this
         case AddToMapSensor(name, value: Tuple2[Any, Any]) =>
-          context.log.info(s"${this.name}: adding to mapsensor $name  value $value ")
+          // context.log.info(s"${this.name}: adding to mapsensor $name  value $value ")
           localSensors += name -> (localSensors.getOrElse(name, Map.empty).asInstanceOf[Map[Any, Any]] + value)
           localSensors += Sensors.neighbors -> (nbrValue[Long](Sensors.neighbors) + (value._1.asInstanceOf[Nbr] -> currentTime()))
           this
         case RemoveToMapSensor(name, value: Tuple2[Any, Any]) =>
-          context.log.info(s"${this.name}: removing from mapsensor $name value $value (its key) ")
+          // context.log.info(s"${this.name}: removing from mapsensor $name value $value (its key) ")
           localSensors += name -> (localSensors.getOrElse(name, Map.empty).asInstanceOf[Map[Any, Any]] - value._1)
           localSensors += Sensors.neighbors -> (nbrValue[Long](Sensors.neighbors) + (value._1.asInstanceOf[Nbr] -> 0))
           this
         case SetNbrSensor(name, nbr, value) =>
-          context.log.info(s"${this.name}: setting nbrsensor $name  to $nbr -> $value ")
+          // context.log.info(s"${this.name}: setting nbrsensor $name  to $nbr -> $value ")
           val sval: Map[ActorRef[DeviceProtocol], Any] = localSensors.getOrElse(name, Map.empty).asInstanceOf[Map[Nbr, Any]]
           localSensors += name -> (sval + (nbr -> value))
           localSensors += Sensors.neighbors -> (nbrValue[Long](Sensors.neighbors) + (nbr -> currentTime()))
@@ -83,7 +83,7 @@ object Actors3 {
           context.self ! SetNbrSensor(what, context.self, result)
           neighbors.foreach(_ ! SetNbrSensor(what, context.self, result))
           timers.startSingleTimer(Compute(what), 2.seconds * Random.nextInt(2))
-          context.log.info(s"${name} computes: ${result}\nvia$localSensors")
+          context.log.info(s"${name} computes: ${result}")
           this
         case AddNeighbour(nbr) =>
           context.log.info(s"${this.name}: adding neighbour $nbr")
@@ -118,7 +118,7 @@ object Actors3App extends App {
   val system = ActorSystem[SystemMessages.Start.type](Behaviors.setup { ctx =>
     for(i <- 1 to 10) {
       map += i -> ctx.spawn(DeviceActor[Double]((ctx,w,d) => {
-        ctx.log.info(s"${d.name}'s context: ${d.localSensors}\nALIGNED NEIGHBORS: ${d.neighbors}")
+        // ctx.log.info(s"${d.name}'s context: ${d.localSensors}\nALIGNED NEIGHBORS: ${d.neighbors}")
         val nbrg = d.nbrValue[Double](Data.gradient)
           .map(n => n._2 + d.nbrSense[Double](Sensors.nbrRange)(n._1).getOrElse(Double.PositiveInfinity))
           .minOption.getOrElse(Double.PositiveInfinity)
