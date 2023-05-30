@@ -15,6 +15,7 @@ object Actors5 {
   val SENSOR_SRC = "source"
   val SENSOR_MID = "myId"
   val SENSOR_RANGE = "nbrRange"
+  val SENSOR_TOLERANCE = "channelTolerance"
 
   type Nbr = String
 
@@ -204,52 +205,32 @@ object Actors5 {
   }
 
   trait ComputationContext
-  case class GradientContext (
-                               val isSource: Boolean = false,
-                               val neighboursGradients: Map[Nbr,Double] = Map.empty,
-                               val neighboursDistances: Map[Nbr,Double] = Map.empty
-                             ) extends ComputationContext
-  trait GradientProtocol
-  case class ComputeGradient(c: GradientContext, replyTo: ActorRef[Double]) extends GradientProtocol
+  case class GradientContext(isSource: Boolean = false,
+                             neighboursGradients: Map[Nbr,Double] = Map.empty,
+                             neighboursDistances: Map[Nbr,Double] = Map.empty
+                            ) extends ComputationContext
 
-  def gradient(): Behavior[GradientProtocol] = Behaviors.receiveMessage {
-    case ComputeGradient(c, replyTo) =>
-      val g = if(c.isSource) 0.0 else {
-        c.neighboursGradients.minByOption(_._2).map {
-          case (nbr,nbrg) => nbrg + c.neighboursDistances(nbr)
-        }.getOrElse(Double.PositiveInfinity)
-      }
-      replyTo ! g
-      Behaviors.same
-  }
+  case class ChannelContext(distanceToSource: Double,
+                            distanceToTarget: Double,
+                            distanceBetweenSourceAndTarget: Double,
+                            tolerance: Double
+                           ) extends ComputationContext
 
-  trait GradientContextProtocol
-  case class SetSource(source: Boolean) extends GradientContextProtocol
-  case class SetNeighbourGradient(nbr: Nbr, gradient: Double) extends GradientContextProtocol
-  case class SetNeighbourDistance(nbr: Nbr, distance: Double) extends GradientContextProtocol
-  case class Get(replyTo: ActorRef[GradientContext])
-
-  def gradientContext(c: GradientContext): Behavior[GradientContextProtocol] = Behaviors.receiveMessage[GradientContextProtocol] {
-    case SetSource(s) => gradientContext(c.copy(isSource = s))
-    case SetNeighbourGradient(nbr, g) => gradientContext(c.copy(neighboursGradients = c.neighboursGradients + (nbr -> g)))
-    case SetNeighbourDistance(nbr, d) => gradientContext(c.copy(neighboursDistances = c.neighboursDistances + (nbr -> d)))
-    // TODO: must also consider that neighbours may be removed together their data
-  }
-
-  trait ChannelContext {
-    val distanceToSource: Double
-    val distanceToTarget: Double
-    val distanceBetweenSourceAndTarget: Double
-    val tolerance: Double
-  }
-  trait ChannelProtocol
-  case class ComputeChannel(c: ChannelContext, replyTo: ActorRef[Boolean]) extends ChannelProtocol
-
-  def channel(): Behavior[ChannelProtocol] = Behaviors.receiveMessage {
-    case ComputeChannel(c, replyTo) =>
-      val channel = c.distanceToSource + c.distanceToTarget <= c.distanceBetweenSourceAndTarget + c.tolerance
-      replyTo ! channel
-      Behaviors.same
+  case class ChannelComputation(id: String) extends RoundBasedComputation[Boolean] {
+    override val name = s"channel_$id"
+    override val contextMapper = (gc: GenericContext) => {
+      val mid = gc.sensors(SENSOR_MID).asInstanceOf[String]
+      ChannelContext(
+        gc.nbrSensors(s"channel_${id}_distToSrc").view.mapValues(_.asInstanceOf[Double])(mid),
+        gc.nbrSensors(s"channel_${id}_distToTarget").view.mapValues(_.asInstanceOf[Double])(mid),
+        gc.nbrSensors(s"channel_${id}_distBetween").view.mapValues(_.asInstanceOf[Double])(mid),
+        gc.sensors(SENSOR_TOLERANCE).asInstanceOf[Double]
+      )
+    }
+    override val computation = (cc: ComputationContext) => {
+      val c = cc.asInstanceOf[ChannelContext]
+      c.distanceToSource + c.distanceToTarget <= c.distanceBetweenSourceAndTarget + c.tolerance
+    }
   }
 }
 
