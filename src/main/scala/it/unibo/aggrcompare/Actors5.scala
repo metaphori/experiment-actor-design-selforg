@@ -12,15 +12,19 @@ import scala.concurrent.duration.{DurationInt, FiniteDuration}
  * 5th attempt: turn different concerns into different actors
  */
 object Actors5 {
+  val SENSOR_SRC = "source"
+  val SENSOR_MID = "myId"
+  val SENSOR_RANGE = "nbrRange"
+
   type Nbr = String
 
   trait NeighborhoodManagementProtocol
-  case class AddNeighbour(nbr: ActorRef[DeviceProtocol]) extends NeighborhoodManagementProtocol
-  case class RemoveNeighbour(nbr: ActorRef[DeviceProtocol]) extends NeighborhoodManagementProtocol
+  case class AddNeighbour(nbr: DeviceComponents) extends NeighborhoodManagementProtocol
+  case class RemoveNeighbour(nbr: DeviceComponents) extends NeighborhoodManagementProtocol
   case class AddListener(nbr: ActorRef[NeighborhoodListenerProtocol]) extends NeighborhoodManagementProtocol
 
   trait NeighborhoodListenerProtocol
-  case class Neighborhood(nbrs: Set[ActorRef[DeviceProtocol]]) extends NeighborhoodListenerProtocol with DeviceCommunicationProtocol
+  case class Neighborhood(nbrs: Set[DeviceComponents]) extends NeighborhoodListenerProtocol with DeviceCommunicationProtocol
 
   trait LocalSensorProtocol
   trait NbrSensorProtocol
@@ -28,7 +32,7 @@ object Actors5 {
   case class Configuration(localSensors: Map[String,Behavior[LocalSensorProtocol]] = Map.empty,
                            nbrSensors: Map[String,Behavior[NbrSensorProtocol]] = Map.empty)
 
-  def neighborhoodManager(nbrs: Set[ActorRef[DeviceProtocol]],
+  def neighborhoodManager(nbrs: Set[DeviceComponents],
                           listeners: Set[ActorRef[NeighborhoodListenerProtocol]]): Behavior[NeighborhoodManagementProtocol] =
     Behaviors.receiveMessage {
       case AddNeighbour(nbr) =>
@@ -71,23 +75,28 @@ object Actors5 {
   trait DeviceActorProtocol
   case object Round extends DeviceActorProtocol
   case class GetComponents(replyTo: ActorRef[DeviceManagerProtocol]) extends DeviceActorProtocol with DeviceActorSetupProtocol
+  case class AddComputation(computation: RoundBasedComputation[_]) extends DeviceActorProtocol
 
   case class Components(nbrManager: ActorRef[NeighborhoodManagementProtocol],
                         localSensors: Map[String,ActorRef[LocalSensorProtocol]],
                         nbrSensors: Map[String,ActorRef[NbrSensorProtocol]],
-                        scheduler: ActorRef[SchedulerProtocol])
+                        scheduler: ActorRef[SchedulerProtocol],
+                        communicator: ActorRef[DeviceCommunicationProtocol])
 
   trait DeviceActorSetupProtocol
 
   def deviceActorSetup(id: String,
-                  config: Configuration = Configuration()): Behavior[DeviceActorSetupProtocol] = Behaviors.setup(ctx => {
+                       config: Configuration = Configuration(),
+                       computations: Set[RoundBasedComputation[_]] = Set.empty): Behavior[DeviceActorSetupProtocol] = Behaviors.setup(ctx => {
     val nbrManager = ctx.spawn(neighborhoodManager(Set.empty, Set.empty), s"device_${id}_nbrManager")
     val localSensorActors = config.localSensors.map(s => s._1 -> ctx.spawn(s._2, s"device_${id}_sensor_${s._1}"))
     val nbrSensorActors = config.nbrSensors.map(s => s._1 -> ctx.spawn(s._2, s"device_${id}_nbrSensor_${s._1}"))
     val schedulerActor = ctx.spawn(scheduler(SchedulerState(None)), s"device_${id}_scheduler")
-    val startingComponents = Components(nbrManager, localSensorActors, nbrSensorActors, schedulerActor)
-    val devActor = ctx.spawn(deviceActor(id, config, startingComponents), s"device_$id")
+    val communicator = ctx.spawn(communication(Set.empty, nbrManager), s"device_${id}_communicator")
+    val startingComponents = Components(nbrManager, localSensorActors, nbrSensorActors, schedulerActor, communicator)
+    val devActor = ctx.spawn(deviceActor(id, config, startingComponents, computations, GenericContext(Map.empty, Map.empty)), s"device_$id")
     schedulerActor ! SetSchedulable(devActor)
+    schedulerActor ! ScheduleComputation
     ctx.log.info(s"Setup of device ${id} done:\n${startingComponents}")
     Behaviors.receiveMessage {
       case GetComponents(replyTo) =>
@@ -96,13 +105,33 @@ object Actors5 {
     }
   })
 
+  trait RoundBasedComputation[V] {
+    val name: String
+    val contextMapper: GenericContext => ComputationContext
+    val computation: ComputationContext => V
+  }
+
   def deviceActor(id: String,
                   config: Configuration = Configuration(),
-                  components: Components): Behavior[DeviceActorProtocol] = Behaviors.receive { (ctx, msg) => msg match {
+                  components: Components,
+                  computations: Set[RoundBasedComputation[_]],
+                  genericContext: GenericContext): Behavior[DeviceActorProtocol] = Behaviors.receive { (ctx, msg) => msg match {
       case GetComponents(replyTo) =>
         replyTo ! DeviceComponents(id, ctx.self, components)
         Behaviors.same
-      case Round => Behaviors.ignore
+      case AddComputation(comp) =>
+        ctx.log.info(s"Adding computation ${comp.name}")
+        deviceActor(id, config, components, computations + comp, genericContext)
+      case Round =>
+        ctx.log.info("Round")
+        computations.foreach((c: RoundBasedComputation[_]) => {
+          ctx.log.info(s"Running computation ${c.name}")
+          val computationContext: ComputationContext = c.contextMapper(genericContext).asInstanceOf[ComputationContext]
+          val result = c.computation(computationContext)
+          ctx.log.info(s"Got $result")
+          // components.communicator ! SendNbrMessage(id, SharedDeviceData())
+        })
+        Behaviors.same
     } }
 
   case class SharedDeviceData(sharedSensorData: Map[String,Any], sharedProgramData: Map[String,Any])
@@ -112,31 +141,32 @@ object Actors5 {
   case class SendNbrMessage(sender: String, data: SharedDeviceData) extends DeviceCommunicationProtocol
   case class CommNeighborhood(nbrs: Set[ActorRef[DeviceCommunicationProtocol]]) extends DeviceCommunicationProtocol
 
-  def communication(nbrs: Set[ActorRef[DeviceCommunicationProtocol]]): Behavior[DeviceCommunicationProtocol] = Behaviors.receiveMessage {
-    case CommNeighborhood(nbrs: Set[ActorRef[DeviceCommunicationProtocol]]) =>
-      communication(nbrs)
-    case Neighborhood(nbrs: Set[ActorRef[DeviceProtocol]]) =>
-      ??? //communication(nbrs)
-    case ReceiveNbrMessage(from, data) =>
-      // should propagate data to components
-      ???
-    case SendNbrMessage(sender, data) =>
-      nbrs.foreach(_ ! ReceiveNbrMessage(sender, data))
-      Behaviors.same
+  def communication(nbrs: Set[DeviceComponents],
+                    nbrManager: ActorRef[NeighborhoodManagementProtocol]): Behavior[DeviceCommunicationProtocol] = Behaviors.setup { ctx =>
+    val mapper: ActorRef[NeighborhoodListenerProtocol] = ctx.messageAdapter(n => n match {
+      case nh @ Neighborhood(_) => nh
+    })
+    nbrManager ! AddListener(mapper)
+    Behaviors.receiveMessage {
+      //case CommNeighborhood(nbrs: Set[ActorRef[DeviceCommunicationProtocol]]) =>
+      //  communication(nbrs)
+      case Neighborhood(nbrs) =>
+        communication(nbrs, nbrManager)
+      case ReceiveNbrMessage(from, data) =>
+        // should propagate data to components
+        nbrs.foreach(n => n.deviceComponents.nbrSensors.foreach(ns => ns._2 ! ???))
+        Behaviors.same
+      case SendNbrMessage(sender, data) =>
+        nbrs.foreach(_.deviceComponents.communicator ! ReceiveNbrMessage(sender, data))
+        Behaviors.same
+    }
   }
 
-  /*
   trait ContextUpdateProtocol
   case class AcquireContext(replyTo: ActorRef[ContextBasedProtocol]) extends ContextUpdateProtocol
 
-  trait RoundProtocol
-  case object Tick extends RoundProtocol with ContextUpdateProtocol
-  def round(contextUpdater: ActorRef[ContextUpdateProtocol]): Behavior[RoundProtocol] = Behaviors.receive { (ctx, msg) => msg match {
-    case Tick =>
-      val futureContext: Future[GenericContext] = contextUpdater ? AcquireContext(ctx.self)
-  } }
-
-  def contextUpdater[C](sensors: Map[String,Any], nbrSensors: Map[String,Map[ActorRef[ContextUpdateProtocol],Map[Nbr,Any]]]): Behavior[ContextUpdateProtocol] =
+  def contextUpdater[C](sensors: Map[String,Any],
+                        nbrSensors: Map[String,Map[Nbr,Any]]): Behavior[ContextUpdateProtocol] =
     Behaviors.receiveMessage {
       case AcquireContext(replyTo) =>
         replyTo ! GenericContext(sensors, nbrSensors)
@@ -144,15 +174,41 @@ object Actors5 {
     }
 
   trait ContextBasedProtocol
-  case class GenericContext(sensors: Map[String,Any], nbrSensors: Map[String,Map[ActorRef[ContextUpdateProtocol],Map[Nbr,Any]]]) extends ContextBasedProtocol
+  case class GenericContext(sensors: Map[String,Any],
+                            nbrSensors: Map[String,Map[Nbr,Any]]) extends ContextBasedProtocol
 
+  /*
+  trait RoundProtocol
+  case object Tick extends RoundProtocol with ContextUpdateProtocol
+  def round(contextUpdater: ActorRef[ContextUpdateProtocol]): Behavior[RoundProtocol] = Behaviors.receive { (ctx, msg) => msg match {
+    case Tick =>
+      val futureContext: Future[GenericContext] = contextUpdater ? AcquireContext(ctx.self)
+  } }
    */
 
+  case class GradientComputation(id: String) extends RoundBasedComputation[Double] {
+    override val name = s"gradient_$id"
+    override val contextMapper = (gc: GenericContext) => {
+      GradientContext(gc.sensors(SENSOR_SRC).asInstanceOf[Boolean],
+        gc.nbrSensors(s"gradient_$id").view.mapValues(_.asInstanceOf[Double]).toMap,
+        gc.nbrSensors(SENSOR_RANGE).view.mapValues(_.asInstanceOf[Double]).toMap)
+    }
+    override val computation = (c: ComputationContext) => {
+      val gc = c.asInstanceOf[GradientContext]
+      if (gc.isSource) 0.0 else {
+        gc.neighboursGradients.minByOption(_._2).map {
+          case (nbr, nbrg) => nbrg + gc.neighboursDistances(nbr)
+        }.getOrElse(Double.PositiveInfinity)
+      }
+    }
+  }
+
+  trait ComputationContext
   case class GradientContext (
                                val isSource: Boolean = false,
                                val neighboursGradients: Map[Nbr,Double] = Map.empty,
                                val neighboursDistances: Map[Nbr,Double] = Map.empty
-                             )
+                             ) extends ComputationContext
   trait GradientProtocol
   case class ComputeGradient(c: GradientContext, replyTo: ActorRef[Double]) extends GradientProtocol
 
@@ -214,6 +270,7 @@ object Actors5App extends App {
       ctx.ask[GetComponents, DeviceComponents](map(i), (ref: ActorRef[_]) => GetComponents(ctx.self)) {
         case scala.util.Success(dc @ DeviceComponents(_, d, c)) =>
           componentsMap += i -> dc
+          dc.deviceActor ! AddComputation(GradientComputation("MY_GRADIENT"))
           dc
         case _ => ???
       }
