@@ -27,7 +27,10 @@ object Actors5 {
   trait NeighborhoodListenerProtocol
   case class Neighborhood(nbrs: Set[DeviceComponents]) extends NeighborhoodListenerProtocol with DeviceCommunicationProtocol
 
+  trait SensorReaderProtocol
+  case class SensorValue(name: String, value: Any) extends SensorReaderProtocol
   trait LocalSensorProtocol
+  case class Sample(replyTo: ActorRef[SensorReaderProtocol]) extends LocalSensorProtocol
   trait NbrSensorProtocol
 
   case class Configuration(localSensors: Map[String,Behavior[LocalSensorProtocol]] = Map.empty,
@@ -98,6 +101,7 @@ object Actors5 {
     val devActor = ctx.spawn(deviceActor(id, config, startingComponents, computations, GenericContext(Map.empty, Map.empty)), s"device_$id")
     schedulerActor ! SetSchedulable(devActor)
     schedulerActor ! ScheduleComputation
+    devActor ! AddComputation(GradientComputation("MY_GRADIENT"))
     ctx.log.info(s"Setup of device ${id} done:\n${startingComponents}")
     Behaviors.receiveMessage {
       case GetComponents(replyTo) =>
@@ -190,7 +194,7 @@ object Actors5 {
   case class GradientComputation(id: String) extends RoundBasedComputation[Double] {
     override val name = s"gradient_$id"
     override val contextMapper = (gc: GenericContext) => {
-      GradientContext(gc.sensors(SENSOR_SRC).asInstanceOf[Boolean],
+      GradientContext(gc.sensors.getOrElse(SENSOR_SRC, false).asInstanceOf[Boolean],
         gc.nbrSensors(s"gradient_$id").view.mapValues(_.asInstanceOf[Double]).toMap,
         gc.nbrSensors(SENSOR_RANGE).view.mapValues(_.asInstanceOf[Double]).toMap)
     }
@@ -246,7 +250,11 @@ object Actors5App extends App {
     // --------------------------------------
     // 2 - 1 - 0 - 1 - 2 - 3 - 4 - 5 - 6 - 7    (gradient)
     for(i <- 1 to 10) {
-      map += i -> ctx.spawn(deviceActorSetup(s"d_$i"), s"device_actor_$i")
+      map += i -> ctx.spawn(deviceActorSetup(s"d_$i", Configuration(
+        Map(
+          SENSOR_SRC -> Behaviors.receiveMessage[LocalSensorProtocol] { case Sample(replyTo) => replyTo ! SensorValue(SENSOR_SRC, i==3); Behaviors.same },
+        )
+      )), s"device_actor_$i")
       implicit val timeout: Timeout = 2.seconds
       ctx.ask[GetComponents, DeviceComponents](map(i), (ref: ActorRef[_]) => GetComponents(ctx.self)) {
         case scala.util.Success(dc @ DeviceComponents(_, d, c)) =>
