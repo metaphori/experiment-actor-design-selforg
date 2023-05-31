@@ -65,6 +65,7 @@ object Actors3 {
           // context.log.info(s"${this.name}: setting sensor $sensorName  to $value ")
           localSensors += (sensorName -> value)
           this
+          /*
         case AddToMapSensor(name, value: (Nbr,_)) =>
           // context.log.info(s"${this.name}: adding to mapsensor $name  value $value ")
           localSensors += name -> (localSensors.getOrElse(name, Map.empty).asInstanceOf[Map[Any,Any]] + value)
@@ -75,9 +76,10 @@ object Actors3 {
           localSensors += name -> (localSensors.getOrElse(name, Map.empty).asInstanceOf[Map[Any,Any]] - value._1)
           updateNbrTimestamp(value._1, 0) // localSensors += Sensors.neighbors -> (nbrValue[Long](Sensors.neighbors) + (value._1.asInstanceOf[Nbr] -> 0))
           this
+           */
         case SetNbrSensor(name, nbr, value) =>
           // context.log.info(s"${this.name}: setting nbrsensor $name  to $nbr -> $value ")
-          val sval: Map[ActorRef[DeviceProtocol], Any] = localSensors.getOrElse(name, Map.empty).asInstanceOf[Map[Nbr, Any]]
+          val sval = localSensors.getOrElse(name, Map.empty).asInstanceOf[Map[Nbr, Any]]
           localSensors += name -> (sval + (nbr -> value))
           updateNbrTimestamp(nbr) // localSensors += Sensors.neighbors -> (nbrValue[Long](Sensors.neighbors) + (nbr -> currentTime()))
           this
@@ -90,12 +92,12 @@ object Actors3 {
           this
         case AddNeighbour(nbr) =>
           context.log.info(s"${this.name}: adding neighbour $nbr")
-          context.self ! AddToMapSensor(Sensors.neighbors, nbr -> currentTime())
-          context.self ! AddToMapSensor(Sensors.nbrRange, nbr -> 1.0)
+          context.self ! SetNbrSensor(Sensors.neighbors, nbr, currentTime())
+          context.self ! SetNbrSensor(Sensors.nbrRange, nbr, 1.0)
           this
         case RemoveNeighbour(nbr) =>
           context.log.info(s"${this.name}: removing neighbour $nbr")
-          context.self ! RemoveToMapSensor(Sensors.neighbors, nbr -> 0)
+          context.self ! SetNbrSensor(Sensors.neighbors, nbr, 0)
           this
         case Stop =>
           Behaviors.stopped
