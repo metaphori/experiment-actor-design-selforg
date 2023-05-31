@@ -53,6 +53,9 @@ object Actors3 {
     def nbrValue[T](name: String): Map[Nbr, T] = senseOrElse[Map[Nbr, T]](name, Map.empty).filter(tp => neighbors.contains(tp._1))
     def neighbors: Set[ActorRef[DeviceProtocol]] = senseOrElse[Map[Nbr, Long]](Sensors.neighbors, Map.empty)
       .filter(tp => currentTime() - tp._2 < RETENTION_TIME).keySet
+    def updateNbrTimestamp(nbr: Nbr, t: Long = currentTime()): Unit =
+      localSensors += Sensors.neighbors -> (nbrValue[Long](Sensors.neighbors) + (nbr -> t))
+
     def name: String = context.self.path.name
     def compute(what: String, d: DeviceActor[T]): T
 
@@ -62,27 +65,27 @@ object Actors3 {
           // context.log.info(s"${this.name}: setting sensor $sensorName  to $value ")
           localSensors += (sensorName -> value)
           this
-        case AddToMapSensor(name, value: Tuple2[Any, Any]) =>
+        case AddToMapSensor(name, value: (Nbr,_)) =>
           // context.log.info(s"${this.name}: adding to mapsensor $name  value $value ")
-          localSensors += name -> (localSensors.getOrElse(name, Map.empty).asInstanceOf[Map[Any, Any]] + value)
-          localSensors += Sensors.neighbors -> (nbrValue[Long](Sensors.neighbors) + (value._1.asInstanceOf[Nbr] -> currentTime()))
+          localSensors += name -> (localSensors.getOrElse(name, Map.empty).asInstanceOf[Map[Any,Any]] + value)
+          updateNbrTimestamp(value._1)
           this
-        case RemoveToMapSensor(name, value: Tuple2[Any, Any]) =>
+        case RemoveToMapSensor(name, value: (Nbr,_)) =>
           // context.log.info(s"${this.name}: removing from mapsensor $name value $value (its key) ")
-          localSensors += name -> (localSensors.getOrElse(name, Map.empty).asInstanceOf[Map[Any, Any]] - value._1)
-          localSensors += Sensors.neighbors -> (nbrValue[Long](Sensors.neighbors) + (value._1.asInstanceOf[Nbr] -> 0))
+          localSensors += name -> (localSensors.getOrElse(name, Map.empty).asInstanceOf[Map[Any,Any]] - value._1)
+          updateNbrTimestamp(value._1, 0) // localSensors += Sensors.neighbors -> (nbrValue[Long](Sensors.neighbors) + (value._1.asInstanceOf[Nbr] -> 0))
           this
         case SetNbrSensor(name, nbr, value) =>
           // context.log.info(s"${this.name}: setting nbrsensor $name  to $nbr -> $value ")
           val sval: Map[ActorRef[DeviceProtocol], Any] = localSensors.getOrElse(name, Map.empty).asInstanceOf[Map[Nbr, Any]]
           localSensors += name -> (sval + (nbr -> value))
-          localSensors += Sensors.neighbors -> (nbrValue[Long](Sensors.neighbors) + (nbr -> currentTime()))
+          updateNbrTimestamp(nbr) // localSensors += Sensors.neighbors -> (nbrValue[Long](Sensors.neighbors) + (nbr -> currentTime()))
           this
         case Compute(what) =>
           val result = compute(what, this)
           context.self ! SetNbrSensor(what, context.self, result)
           neighbors.foreach(_ ! SetNbrSensor(what, context.self, result))
-          timers.startSingleTimer(Compute(what), 2.seconds * Random.nextInt(2))
+          timers.startSingleTimer(Compute(what), 2.seconds * (1+Random.nextInt(2)))
           context.log.info(s"${name} computes: ${result}")
           this
         case AddNeighbour(nbr) =>
