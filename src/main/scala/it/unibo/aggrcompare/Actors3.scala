@@ -51,7 +51,7 @@ object Actors3 {
     def senseOrElse[T](name: String, default: => T): T = localSensors.getOrElse(name, default).asInstanceOf[T]
     def nbrSense[T](name: String)(id: Nbr): Option[T] = nbrValue(name).get(id).filter((v: T) => neighbors.contains(id))
     def nbrValue[T](name: String): Map[Nbr, T] = senseOrElse[Map[Nbr, T]](name, Map.empty).filter(tp => neighbors.contains(tp._1))
-    def neighbors: Set[ActorRef[DeviceProtocol]] = senseOrElse[Map[Nbr, Long]](Sensors.neighbors, Map.empty)
+    def neighbors: Set[ActorRef[DeviceProtocol]] = senseOrElse[Map[Nbr, Long]](Sensors.neighbors, Map(context.self -> currentTime()))
       .filter(tp => currentTime() - tp._2 < RETENTION_TIME).keySet
     def updateNbrTimestamp(nbr: Nbr, t: Long = currentTime()): Unit =
       localSensors += Sensors.neighbors -> (nbrValue[Long](Sensors.neighbors) + (nbr -> t))
@@ -85,7 +85,7 @@ object Actors3 {
           this
         case Compute(what) =>
           val result = compute(what, this)
-          context.self ! SetNbrSensor(what, context.self, result)
+          // context.self ! SetNbrSensor(what, context.self, result)
           neighbors.foreach(_ ! SetNbrSensor(what, context.self, result))
           timers.startSingleTimer(Compute(what), 2.seconds * (1+Random.nextInt(2)))
           context.log.info(s"${name} computes: ${result}")
