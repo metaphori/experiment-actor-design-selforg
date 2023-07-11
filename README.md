@@ -1,6 +1,8 @@
 # Experimental Designs for Implementing Self-Organising Behaviours through Akka Typed actors
 
-TODO DESCRIPTION
+## Requirements
+
+- JDK 8+
 
 ## Execution
 
